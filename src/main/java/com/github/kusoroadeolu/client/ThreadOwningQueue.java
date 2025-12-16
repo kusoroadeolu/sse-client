@@ -16,8 +16,10 @@ public class ThreadOwningQueue<E> {
     }
 
     public boolean add(E e){
-       if (Thread.currentThread().equals(this.owningThread)) return this.queue.add(e);
-       else return false;
+        if (!Thread.currentThread().equals(this.owningThread)) {
+            throw new IllegalStateException("Queue can only be modified by connecting thread");
+        }
+       else return this.queue.add(e);
     }
 
     public E poll(){
@@ -33,7 +35,11 @@ public class ThreadOwningQueue<E> {
     }
 
     public void clear(){
-        if (Thread.currentThread().equals(this.owningThread)) this.queue.clear();
+        if (!Thread.currentThread().equals(this.owningThread)) {
+            throw new IllegalStateException("Queue can only be modified by connecting thread");
+        }
+
+        this.queue.clear();
     }
 
 }

@@ -1,5 +1,5 @@
 # Sse Client
-Sse client is a simple to use but feature rich sse client that I made for fun. Sse client is inherently thread safe.
+Sse client is a simple to use but feature rich sse client that I made for fun. Sse client is thread safe.
 
 ## How to use
 Using the sse client is very honestly simple. 
@@ -67,6 +67,15 @@ var jsonData = queue.poll();
 var jsonData = queue.peek();
 ```
 
+### Choosing Between Callbacks and Queue
+- **Callbacks**: Best for fast, async processing. Events are delivered on virtual threads.
+- **Queue**: Best when you need control over consumption rate. Poll when ready.
+- **Both**: Events go to both. Useful if callbacks handle logging while queue handles business logic.
+
+### Thread safety
+The clients internal synchronization prevents corruption. 
+</br> Queue modifications from `add()` and `clear()` are only allowed from the connecting thread otherwise an `IllegalStateEx` is thrown.
+ 
 ### Queue semantics
 - The queue is bounded by `maxNumOfEvents`
 - When full, the client [throws]
@@ -75,7 +84,6 @@ var jsonData = queue.peek();
 
 ## Some other stuff
 - The client handles SSE framing and delivery, but leaves the payload (JSON, text, domain objects) entirely to the user
-- The sse client is inherently thread safe. No need to worry about any threading gotchas
 - All callbacks from the sse client are fired off async on a seperate virtual thread
 - I actually spent more time on the retry template than the client itself lol
 - Designed this as a lightweight, pragmatic Sse client
