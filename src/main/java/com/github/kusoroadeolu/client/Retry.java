@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 import static java.lang.Math.sqrt;
 
 @FunctionalInterface
-public interface Retry {
+interface Retry {
     void run() throws Exception;
 
     final static ScheduledExecutorService EXEC = Executors.newScheduledThreadPool(10000, Thread.ofVirtual().factory());

@@ -8,8 +8,6 @@ import java.net.http.HttpResponse;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -22,7 +20,7 @@ public class SseClient implements AutoCloseable{
     private final HttpRequest.Builder cnb;
     private final URI uri;
     private final Consumer<String> doOnEvent;
-    private Status status;
+    private SseClientStatus sseClientStatus;
     private final Runnable doOnComplete;
     private final Consumer<Throwable> doOnError;
     private final ThreadOwningQueue<String> queue;
@@ -42,7 +40,7 @@ public class SseClient implements AutoCloseable{
         this.httpClient = HttpClient.newHttpClient();
         uri = builder.uri;
         this.cnb = this.createRequest(builder.headers);
-        this.status = Status.IDLE;
+        this.sseClientStatus = SseClientStatus.IDLE;
         this.doOnEvent = builder.doOnEvent;
         this.doOnComplete = builder.doOnClose;
         this.doOnError = builder.doOnError;
@@ -60,7 +58,7 @@ public class SseClient implements AutoCloseable{
     }
 
     public void connect() {
-         this.setStatus(Status.CONNECTED);
+         this.setStatus(SseClientStatus.CONNECTED, true);
          try {
              retry(this::connectWithoutRetry, this.rt);
          }catch (RetryFailedException e){
@@ -70,14 +68,29 @@ public class SseClient implements AutoCloseable{
     }
 
     public void close(){
-        this.setStatus(Status.CLOSED);
+        try {
+            this.setStatus(SseClientStatus.CLOSED, false);
+        }catch (SseClientException ignored){return;} //Just return here
         if (this.doOnComplete != null) this.doOnComplete.run();
         this.queue.clear();
         this.httpClient.close();
     }
 
     public ThreadOwningQueue<String> queue(){
-         return this.queue;
+        return this.queue;
+    }
+
+    public String lastEventId(){
+         return this.lastEventId;
+    }
+
+    public SseClientStatus status(){
+         this.lock.lock();
+         try {
+             return this.sseClientStatus;
+         }finally {
+             this.lock.unlock();
+         }
     }
 
     private void connectWithoutRetry() throws IOException, InterruptedException {
@@ -104,12 +117,14 @@ public class SseClient implements AutoCloseable{
          return req;
     }
 
-    private void setStatus(Status status){
-         if (this.status == Status.CLOSED) throw new SseClientException("Client has been closed");
+
+    private void setStatus(SseClientStatus sseClientStatus, boolean fromConnectMethod){
+         if (this.sseClientStatus == SseClientStatus.CLOSED) throw new SseClientException("Client has been closed");
          this.lock.lock();
          try {
-             if (this.status == Status.CLOSED) throw new SseClientException("Client has been closed");
-             this.status = status;
+             if (this.sseClientStatus == SseClientStatus.CLOSED) throw new SseClientException("Client has been closed");
+             if (fromConnectMethod && this.sseClientStatus == SseClientStatus.CONNECTED) throw new SseClientException("Client is already connected");
+             this.sseClientStatus = sseClientStatus;
          }finally {
              this.lock.unlock();
          }
@@ -150,7 +165,7 @@ public class SseClient implements AutoCloseable{
                 .build();
     }
 
-    private enum Status{
+    public enum SseClientStatus {
          IDLE,
          CONNECTED,
          CLOSED
@@ -205,7 +220,7 @@ public class SseClient implements AutoCloseable{
             return this;
         }
 
-        public SseClientBuilder setDoOnError(Consumer<Throwable> doOnError) {
+        public SseClientBuilder doOnError(Consumer<Throwable> doOnError) {
             requireNonNull(doOnError);
             this.doOnError = doOnError;
             return this;

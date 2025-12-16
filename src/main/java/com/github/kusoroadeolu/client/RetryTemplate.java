@@ -2,7 +2,7 @@ package com.github.kusoroadeolu.client;
 
 import java.util.Objects;
 
-public class RetryTemplate {
+class RetryTemplate {
     private final int delay;
     private final int backoff;
     private final Class<?>[] retryFor;
