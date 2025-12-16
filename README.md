@@ -14,7 +14,7 @@ var client = SseClient.builder()
         .doOnClose(() -> doSomething()) //Do something when the sse client closes;
         .maxNumOfEvents(50) //Max number of events the client will hold before throwing exceptions. 
         .addHeaders("Authentication", "SomeAuthHeader")  //Add custom headers
-        .setPrefix("event") //The prefix for the attribute key to the JSON payload
+        .prefix("event") //The prefix for the attribute key to the JSON payload
         .delay(1) //Delay in seconds to retry when an http ex occurs
         .backoff(1) //Backoff in seconds when an http ex occurs. 
         .maxNumberOfTries(5) //Max number of times to retry on http exceptions before we throw an error
@@ -22,6 +22,11 @@ var client = SseClient.builder()
         .build(); //Build the client
 ```
 - Backoff: The formula used for back off is `delay * sqrt(backoff)`
+- Prefix: Per-say you have an event payload like
+> id: 1234
+> event: {"name" : "victor", "age":"100"} 
+
+The sse client strips out `event` and returns the json only payload
 
 2. Connecting to the given url
 ```java
@@ -58,15 +63,25 @@ You can access JSON events from the client's queue.
 **Note:** Only the thread which connected the client can `add()` to or `clear()` the queue i.e. the thread that called `client.connect()`
 ```java
 ThreadOwningQueue<String> queue = client.queue();
-String jsonData = queue.poll();
-String jsonData = queue.peek();
+var jsonData = queue.poll();
+var jsonData = queue.peek();
 ```
 
+### Queue semantics
+- The queue is bounded by `maxNumOfEvents`
+- When full, the client [throws]
+- `poll()` is non-blocking
+- Closing the client clears the queue and unblocks pollers
+
 ## Some other stuff
-- The sse client intentionally doesn't parse the given data body, to allow users to be as flexible as they want when dealing with the JSON payload. Though this might incur some boilerplate
+- The client handles SSE framing and delivery, but leaves the payload (JSON, text, domain objects) entirely to the user
 - The sse client is inherently thread safe. No need to worry about any threading gotchas
+- All callbacks from the sse client are fired off async on a seperate virtual thread
 - I actually spent more time on the retry template than the client itself lol
-- Built this in a day just for fun lol
+- Designed this as a lightweight, pragmatic Sse client
+
+## Requirements
+Java 25+
 
 ## License
 MIT License: Feel free to use this as you wish

@@ -62,7 +62,7 @@ public class SseClient implements AutoCloseable{
          try {
              retry(this::connectWithoutRetry, this.rt);
          }catch (RetryFailedException e){
-             if (this.doOnError != null) this.doOnError.accept(e);
+             if (this.doOnError != null) Thread.startVirtualThread(() -> this.doOnError.accept(e));
              throw new SseClientException(e);
          }
     }
@@ -71,7 +71,7 @@ public class SseClient implements AutoCloseable{
         try {
             this.setStatus(SseClientStatus.CLOSED, false);
         }catch (SseClientException ignored){return;} //Just return here
-        if (this.doOnComplete != null) this.doOnComplete.run();
+        if (this.doOnComplete != null) Thread.startVirtualThread(this.doOnComplete);
         this.queue.clear();
         this.httpClient.close();
     }
@@ -103,7 +103,7 @@ public class SseClient implements AutoCloseable{
             final var arr = s.split(NEWLINE);
             final var data = this.getData(arr);
             this.setLastEventId(arr);
-            this.doOnEvent.accept(data);
+            Thread.startVirtualThread(() -> this.doOnEvent.accept(data));
             this.queue.add(data);
         });
     }
@@ -189,7 +189,7 @@ public class SseClient implements AutoCloseable{
             headers = new HashMap<>();
         }
 
-        public SseClientBuilder setPrefix(String prefix) {
+        public SseClientBuilder prefix(String prefix) {
             requireNonNull(prefix);
             this.prefix = prefix;
             return this;
