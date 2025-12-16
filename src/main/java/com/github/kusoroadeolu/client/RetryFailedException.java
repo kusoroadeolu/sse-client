@@ -1,4 +1,4 @@
-package com.github.kusoroadeolu;
+package com.github.kusoroadeolu.client;
 
 public class RetryFailedException extends RuntimeException {
     public RetryFailedException(String message) {

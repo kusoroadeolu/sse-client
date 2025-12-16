@@ -1,4 +1,4 @@
-package com.github.kusoroadeolu;
+package com.github.kusoroadeolu.client;
 
 import java.util.Objects;
 

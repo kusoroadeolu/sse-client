@@ -1,4 +1,4 @@
-package com.github.kusoroadeolu;
+package com.github.kusoroadeolu.client;
 
 import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
@@ -15,7 +15,7 @@ public interface Retry {
 
     final static ScheduledExecutorService EXEC = Executors.newScheduledThreadPool(10000, Thread.ofVirtual().factory());
 
-    static void retry(Retry retry ,RetryTemplate rt) throws RetryFailedException {
+    static void retry(Retry retry , RetryTemplate rt) throws RetryFailedException {
         final var exceptionSet = Arrays.stream(rt.getRetryFor()).collect(Collectors.toSet());
         var delay = 0L;
         Exception throwable = null;
@@ -34,14 +34,13 @@ public interface Retry {
                 future.get();
             } catch (InterruptedException | ExecutionException e) {
                 if (numOfTries == 0) delay = rt.getDelay();
-                var cause = e.getCause().getCause();
+                final var cause = e.getCause().getCause();
                 if (exceptionSet.contains(cause.getClass())){
                     delay = Math.min(rt.getMaxDelay(), delay * (long) sqrt(rt.getBackoff()));
                     throwable = e;
                     continue;
                 }
-
-                throw new RetryFailedException(e);
+                else throw new RetryFailedException(e);
             }
 
             return;

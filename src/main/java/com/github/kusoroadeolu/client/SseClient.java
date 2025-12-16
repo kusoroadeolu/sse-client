@@ -1,55 +1,57 @@
 package com.github.kusoroadeolu.client;
 
-import com.github.kusoroadeolu.RetryFailedException;
-import com.github.kusoroadeolu.RetryTemplate;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
-import static com.github.kusoroadeolu.Retry.retry;
+import static com.github.kusoroadeolu.client.Retry.retry;
 import static java.util.Objects.requireNonNull;
 
-public class SseClient{
+public class SseClient implements AutoCloseable{
     private final HttpClient httpClient;
     private final HttpRequest.Builder cnb;
     private final URI uri;
     private final Consumer<String> doOnEvent;
-    private final String prefix;
-    private final AtomicBoolean isConnected;
+    private Status status;
     private final Runnable doOnComplete;
     private final Consumer<Throwable> doOnError;
-    private final Queue<String> queue;
+    private final ThreadOwningQueue<String> queue;
     private final RetryTemplate rt;
     private String lastEventId;
-
-
-    private final char JSON_START = '{';
-    private final char JSON_END = '}';
+    private final Lock lock;
+    private final String prefix;
+    private final int maxNumOfEvents;
 
     private final static String LAST_EVENT_ID = "Last-Event-ID";
+    private final static String NEWLINE = "\n";
+    private final static String ID = "id";
+    private final static String COLON = ":";
 
 
      SseClient(SseClientBuilder builder) {
         this.httpClient = HttpClient.newHttpClient();
         uri = builder.uri;
         this.cnb = this.createRequest(builder.headers);
-        this.isConnected = new AtomicBoolean(false);
+        this.status = Status.IDLE;
         this.doOnEvent = builder.doOnEvent;
-        this.doOnComplete = builder.doOnComplete;
+        this.doOnComplete = builder.doOnClose;
         this.doOnError = builder.doOnError;
-        this.prefix = builder.prefix;
-        this.queue = new ArrayBlockingQueue<>(10);
         this.rt = this.buildTemplate(builder);
         this.lastEventId = "0";
+        this.lock = new ReentrantLock();
+        this.prefix = builder.prefix;
+        this.maxNumOfEvents = builder.maxNumOfEvents;
+         this.queue = new ThreadOwningQueue<>(this.maxNumOfEvents,true);
     }
 
 
@@ -58,7 +60,7 @@ public class SseClient{
     }
 
     public void connect() {
-         if (!isConnected.compareAndSet(false, true)) throw new RuntimeException("Already connected!");
+         this.setStatus(Status.CONNECTED);
          try {
              retry(this::connectWithoutRetry, this.rt);
          }catch (RetryFailedException e){
@@ -67,18 +69,29 @@ public class SseClient{
          }
     }
 
+    public void close(){
+        this.setStatus(Status.CLOSED);
+        if (this.doOnComplete != null) this.doOnComplete.run();
+        this.queue.clear();
+        this.httpClient.close();
+    }
+
+    public ThreadOwningQueue<String> queue(){
+         return this.queue;
+    }
+
     private void connectWithoutRetry() throws IOException, InterruptedException {
+        this.queue.setOwningThread(Thread.currentThread());
         final var connectRequest = this.cnb.header(LAST_EVENT_ID, this.lastEventId).GET().build();
         final var response = this.httpClient.send(connectRequest, HttpResponse.BodyHandlers.ofLines());
         final var lines = response.body();
         lines.forEach(s -> {
             if (s.isBlank()) return;
-            final var bIdx = s.indexOf(JSON_START);
-            final var lIdx = s.lastIndexOf(JSON_END) + 1;
-            s = s.substring(bIdx, lIdx);
-
-            this.doOnEvent.accept(s);
-            this.queue.add(s);
+            final var arr = s.split(NEWLINE);
+            final var data = this.getData(arr);
+            this.setLastEventId(arr);
+            this.doOnEvent.accept(data);
+            this.queue.add(data);
         });
     }
 
@@ -91,6 +104,41 @@ public class SseClient{
          return req;
     }
 
+    private void setStatus(Status status){
+         if (this.status == Status.CLOSED) throw new SseClientException("Client has been closed");
+         this.lock.lock();
+         try {
+             if (this.status == Status.CLOSED) throw new SseClientException("Client has been closed");
+             this.status = status;
+         }finally {
+             this.lock.unlock();
+         }
+    }
+
+
+    private void setLastEventId(String[] arr){
+        final var id = getId(arr);
+        if (!id.isBlank()) this.lastEventId = id;
+    }
+
+    private String getData(String[] arr){
+        return Arrays.stream(arr)
+                .filter(str -> str.startsWith(this.prefix))
+                .map(str -> str.substring(str.indexOf(COLON) + 1).trim())
+                .findFirst()
+                .orElse("");
+    }
+
+    private String getId(String[] arr){
+        return Arrays.stream(arr)
+                .filter(str -> str.startsWith(ID))
+                .map(str -> str.split(COLON)[1].trim())
+                .findFirst()
+                .orElse("");
+    }
+
+
+
     private RetryTemplate buildTemplate(SseClientBuilder builder){
         return RetryTemplate
                 .builder()
@@ -102,23 +150,34 @@ public class SseClient{
                 .build();
     }
 
-
+    private enum Status{
+         IDLE,
+         CONNECTED,
+         CLOSED
+    }
 
 
     public static class SseClientBuilder{
         private URI uri;
         private Consumer<String> doOnEvent;
+        private String prefix = "data";
         private final Map<String, String> headers;
-        private Runnable doOnComplete;
+        private Runnable doOnClose;
         private Consumer<Throwable> doOnError;
-        private String prefix;
         private int delay = 2;
         private int backoff = 10;
         private int maxNumberOfTries = 3;
         private int maxDelay = 60;
+        private int maxNumOfEvents = 100;
 
         public SseClientBuilder() {
             headers = new HashMap<>();
+        }
+
+        public SseClientBuilder setPrefix(String prefix) {
+            requireNonNull(prefix);
+            this.prefix = prefix;
+            return this;
         }
 
         public SseClientBuilder url(String url) {
@@ -130,6 +189,12 @@ public class SseClient{
         public SseClientBuilder doOnEvent(Consumer<String> doOnEvent) {
             requireNonNull(doOnEvent);
             this.doOnEvent = doOnEvent;
+            return this;
+        }
+
+        public SseClientBuilder maxNumOfEvents(int maxNumOfEvents) {
+            assertPositive(maxNumOfEvents);
+            this.maxNumOfEvents = maxNumOfEvents;
             return this;
         }
 
@@ -145,13 +210,6 @@ public class SseClient{
             this.doOnError = doOnError;
             return this;
         }
-
-        public SseClientBuilder bodyPrefix(String prefix){
-            requireNonNull(prefix);
-            this.prefix = prefix;
-            return this;
-        }
-
 
         public SseClientBuilder maxNumberOfTries(int numberOfTries) {
             assertPositive(numberOfTries);
@@ -177,9 +235,9 @@ public class SseClient{
             return this;
         }
 
-        public SseClientBuilder doOnComplete(Runnable doOnComplete) {
-            requireNonNull(doOnComplete);
-            this.doOnComplete = doOnComplete;
+        public SseClientBuilder doOnClose(Runnable doOnClose) {
+            requireNonNull(doOnClose);
+            this.doOnClose = doOnClose;
             return this;
         }
 
