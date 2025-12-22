@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -20,7 +21,7 @@ public class SseClient implements AutoCloseable{
     private final HttpRequest.Builder cnb;
     private final URI uri;
     private final Consumer<String> doOnEvent;
-    private SseClientStatus sseClientStatus;
+    private volatile SseClientStatus sseClientStatus;
     private final Runnable doOnComplete;
     private final Consumer<Throwable> doOnError;
     private final ThreadOwningQueue<String> queue;
@@ -28,7 +29,6 @@ public class SseClient implements AutoCloseable{
     private String lastEventId;
     private final Lock lock;
     private final String prefix;
-    private final int maxNumOfEvents;
 
     private final static String LAST_EVENT_ID = "Last-Event-ID";
     private final static String NEWLINE = "\n";
@@ -48,8 +48,8 @@ public class SseClient implements AutoCloseable{
         this.lastEventId = "0";
         this.lock = new ReentrantLock();
         this.prefix = builder.prefix;
-        this.maxNumOfEvents = builder.maxNumOfEvents;
-         this.queue = new ThreadOwningQueue<>(this.maxNumOfEvents,true);
+         int maxNumOfEvents = builder.maxNumOfEvents;
+         this.queue = new ThreadOwningQueue<>(maxNumOfEvents,true);
     }
 
 
@@ -76,8 +76,16 @@ public class SseClient implements AutoCloseable{
         this.httpClient.close();
     }
 
-    public ThreadOwningQueue<String> queue(){
-        return this.queue;
+    public String poll(){
+        return this.queue.poll();
+    }
+
+    public String poll(int timeout, TimeUnit timeUnit) throws InterruptedException {
+         return this.queue.poll(timeout, timeUnit);
+    }
+
+    public String peek(){
+         return this.queue.peek();
     }
 
     public String lastEventId(){
@@ -85,12 +93,7 @@ public class SseClient implements AutoCloseable{
     }
 
     public SseClientStatus status(){
-         this.lock.lock();
-         try {
-             return this.sseClientStatus;
-         }finally {
-             this.lock.unlock();
-         }
+         return this.sseClientStatus;
     }
 
     private void connectWithoutRetry() throws IOException, InterruptedException {
@@ -175,7 +178,7 @@ public class SseClient implements AutoCloseable{
     public static class SseClientBuilder{
         private URI uri;
         private Consumer<String> doOnEvent;
-        private String prefix = "data";
+        private String prefix = D_PREFIX;
         private final Map<String, String> headers;
         private Runnable doOnClose;
         private Consumer<Throwable> doOnError;
@@ -184,6 +187,7 @@ public class SseClient implements AutoCloseable{
         private int maxNumberOfTries = 3;
         private int maxDelay = 60;
         private int maxNumOfEvents = 100;
+        private final static String D_PREFIX = "data";
 
         public SseClientBuilder() {
             headers = new HashMap<>();

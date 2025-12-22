@@ -58,35 +58,33 @@ if(status == CLOSED) doSomething();
 String lastEventId = client.lastEventId();
 doSomething(lastEventId);
 ```
-6. Client Queue
-You can access JSON events from the client's queue. 
-**Note:** Only the thread which connected the client can `add()` to or `clear()` the queue i.e. the thread that called `client.connect()`
+6. Client Polling
 ```java
-ThreadOwningQueue<String> queue = client.queue();
-var jsonData = queue.poll();
-var jsonData = queue.peek();
+var jsonData = client.poll();
+var jsonData = client.poll(5, TimeUnit.SECONDS); //Poll with a timeout
+var jsonData = client.peek();
 ```
 
-### Choosing Between Callbacks and Queue
+### Choosing Between Callbacks and Polling
 - **Callbacks**: Best for fast, async processing. Events are delivered on virtual threads.
-- **Queue**: Best when you need control over consumption rate. Poll when ready.
+- **Polling**: Best when you need control over consumption rate. Poll when ready.
 - **Both**: Events go to both. Useful if callbacks handle logging while queue handles business logic.
 
 ### Thread safety
 The clients internal synchronization prevents corruption. 
 </br> Queue modifications from `add()` and `clear()` are only allowed from the connecting thread otherwise an `IllegalStateEx` is thrown.
  
-### Queue semantics
-- The queue is bounded by `maxNumOfEvents`
-- When full, the client [throws]
+### Poll semantics
+- The client buffer is bounded by `maxNumOfEvents`
+- When full, the client throws
 - `poll()` is non-blocking
 - Closing the client clears the queue and unblocks pollers
 
 ## Some other stuff
 - The client handles SSE framing and delivery, but leaves the payload (JSON, text, domain objects) entirely to the user
-- All callbacks from the sse client are fired off async on a seperate virtual thread
+- All callbacks from the sse client are fired off async on a separate virtual thread
 - I actually spent more time on the retry template than the client itself lol
-- Designed this as a lightweight, pragmatic Sse client
+- Designed this as a lightweight but simple to use sse client
 
 ## Requirements
 Java 25+
